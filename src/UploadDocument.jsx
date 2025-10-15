@@ -12,6 +12,43 @@ export default function UploadDocument() {
   const [modalError, setModalError] = useState("");
   const [pendingCid, setPendingCid] = useState(null);
 
+  // Centralized status helper to keep messages consistent and maintainable
+  function setAppStatus(key, extra) {
+    let text = "";
+    switch (key) {
+      case "need_file":
+        text = "Error: Please upload a file";
+        break;
+      case "uploading_ipfs":
+        text = "⏳ Uploading to IPFS...";
+        break;
+      case "upload_failed":
+        text = "❌ Upload failed";
+        break;
+      case "storing":
+        text = "⏳ Storing CID on blockchain...";
+        break;
+      case "stored":
+        text = `✅ Document stored with CID: ${extra ?? ""}`;
+        break;
+      case "tx_failed":
+        text = "❌ Blockchain transaction failed";
+        break;
+      case "resuming":
+        text = "⏳ Resuming upload after network switch...";
+        break;
+      case "resume_failed":
+        text = "❌ Resume upload failed";
+        break;
+      case "paused":
+        text = "❌ Network switch/add failed — upload paused";
+        break;
+      default:
+        text = extra ?? "";
+    }
+    setStatus(text);
+  }
+
   async function uploadToPinata(file) {
     const formData = new FormData();
     formData.append("file", file);
@@ -43,13 +80,13 @@ export default function UploadDocument() {
   }
 
   async function uploadDocument() {
-    if (!file) return setStatus("Error: Please upload a file");
+    if (!file) return setAppStatus("need_file");
 
-    setStatus("⏳ Uploading to IPFS...");
+    setAppStatus("uploading_ipfs");
     const cid = await uploadToPinata(file);
 
     if (!cid) {
-      setStatus("❌ Upload failed");
+      setAppStatus("upload_failed");
       return;
     }
 
@@ -83,7 +120,7 @@ export default function UploadDocument() {
 
       // 🔹 Contract (connected with signer)
       // Only set storing status once we've confirmed the networks match
-      setStatus("⏳ Storing CID on blockchain...");
+      setAppStatus("storing");
       const contract = new ethers.Contract(
         contractAddress,
         contractABI,
@@ -94,10 +131,10 @@ export default function UploadDocument() {
       const tx = await contract.uploadDocument(cid);
       await tx.wait();
 
-      setStatus(`✅ Document stored with CID: ${cid}`);
+      setAppStatus("stored", cid);
     } catch (err) {
       console.error("Blockchain transaction failed:", err);
-      setStatus("❌ Blockchain transaction failed");
+      setAppStatus("tx_failed");
     }
   }
 
@@ -121,14 +158,14 @@ export default function UploadDocument() {
       // If we have a pending CID from before the switch, resume the upload automatically
       if (pendingCid) {
         // small delay to allow MetaMask to complete network change
-        setStatus("⏳ Resuming upload after network switch...");
+        setAppStatus("resuming");
         const cidToResume = pendingCid;
         setPendingCid(null);
         try {
           await resumeUpload(cidToResume);
         } catch (resumeErr) {
           console.error("Resume upload failed", resumeErr);
-          setStatus("❌ Resume upload failed");
+          setAppStatus("resume_failed");
         }
       }
     } catch (err) {
@@ -152,7 +189,7 @@ export default function UploadDocument() {
         setModalError("");
 
         if (pendingCid) {
-          setStatus("❌ Network switch/add failed — upload paused");
+          setAppStatus("paused");
         }
       } catch (err2) {
         console.error("Switch network failed", err2);
@@ -174,13 +211,13 @@ export default function UploadDocument() {
         signer
       );
 
-      setStatus("⏳ Storing CID on blockchain...");
+      setAppStatus("storing");
       const tx = await contract.uploadDocument(cid);
       await tx.wait();
-      setStatus(`✅ Document stored with CID: ${cid}`);
+      setAppStatus("stored", cid);
     } catch (err) {
       console.error("resumeUpload failed", err);
-      setStatus("❌ Blockchain transaction failed");
+      setAppStatus("tx_failed");
     }
   }
 
