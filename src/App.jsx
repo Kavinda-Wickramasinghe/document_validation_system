@@ -10,6 +10,7 @@ import FileVerify from "./components/FileVerify";
 const NavBar = ({ onNavigate }) => {
   const { walletAddress, handleLogout } = useWallet();
   const [currentPage, setCurrentPage] = useState("upload");
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   const navigateTo = (page) => {
     setCurrentPage(page);
@@ -52,12 +53,45 @@ const NavBar = ({ onNavigate }) => {
               )}`
             : "Disconnected"}
         </span>
-        <button
-          onClick={handleLogout}
-          className="px-4 py-2 font-semibold text-red-500 transition-colors duration-200 bg-red-50 rounded-lg hover:bg-red-100"
-        >
-          Logout
-        </button>
+        <>
+          <button
+            onClick={() => setShowLogoutConfirm(true)}
+            className="px-4 py-2 font-semibold text-red-500 transition-colors duration-200 bg-red-50 rounded-lg hover:bg-red-100"
+          >
+            Logout
+          </button>
+
+          {showLogoutConfirm && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+              <div className="w-full max-w-sm p-6 bg-white rounded-lg shadow-lg">
+                <h3 className="text-lg font-semibold text-slate-600">
+                  Confirm logout
+                </h3>
+                <p className="mt-2 text-sm text-slate-600">
+                  Are you sure you want to logout? This will disconnect your
+                  wallet from the app.
+                </p>
+                <div className="mt-4 flex justify-end space-x-3">
+                  <button
+                    onClick={() => setShowLogoutConfirm(false)}
+                    className="px-4 py-2 text-sm bg-gray-600 rounded hover:bg-gray-500"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setShowLogoutConfirm(false);
+                      await handleLogout();
+                    }}
+                    className="px-4 py-2 text-sm font-semibold text-white bg-red-500 rounded hover:bg-red-600"
+                  >
+                    Confirm
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
       </div>
     </nav>
   );
