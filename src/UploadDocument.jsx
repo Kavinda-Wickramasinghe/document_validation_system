@@ -7,6 +7,10 @@ const contractAddress = import.meta.env.VITE_SMART_CONTRACT_ADDRESS;
 export default function UploadDocument() {
   const [file, setFile] = useState(null);
   const [status, setStatus] = useState("");
+  const [showNetworkModal, setShowNetworkModal] = useState(false);
+  const [targetChain, setTargetChain] = useState(null);
+  const [modalError, setModalError] = useState("");
+  const [pendingCid, setPendingCid] = useState(null);
 
   async function uploadToPinata(file) {
     const formData = new FormData();
@@ -49,16 +53,44 @@ export default function UploadDocument() {
       return;
     }
 
-    setStatus("⏳ Storing CID on blockchain...");
     try {
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
+      // 🔹 Alchemy RPC Provider
+      const alchemyRpc =
+        "https://eth-sepolia.g.alchemy.com/v2/tkUgem1xbwAjbPRlxtUjw"; // replace with your actual key
+      const alchemyProvider = new ethers.JsonRpcProvider(alchemyRpc);
+
+      // 🔹 MetaMask Signer (for transaction)
+      const browserProvider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await browserProvider.getSigner();
+
+      // 🔹 Optional: Verify user is on same network
+      const signerNetwork = await browserProvider.getNetwork();
+      const alchemyNetwork = await alchemyProvider.getNetwork();
+
+      if (signerNetwork.chainId !== alchemyNetwork.chainId) {
+        // show a modal asking the user to switch MetaMask network
+        setTargetChain({
+          chainId: alchemyNetwork.chainId,
+          name: alchemyNetwork.name,
+          rpcUrl: alchemyRpc,
+        });
+        setModalError("");
+        // remember this CID so we can resume after switching
+        setPendingCid(cid);
+        setShowNetworkModal(true);
+        return;
+      }
+
+      // 🔹 Contract (connected with signer)
+      // Only set storing status once we've confirmed the networks match
+      setStatus("⏳ Storing CID on blockchain...");
       const contract = new ethers.Contract(
         contractAddress,
         contractABI,
         signer
       );
 
+      // 🔹 Execute blockchain transaction
       const tx = await contract.uploadDocument(cid);
       await tx.wait();
 
@@ -69,8 +101,126 @@ export default function UploadDocument() {
     }
   }
 
+  async function switchNetwork() {
+    setModalError("");
+    try {
+      if (!window.ethereum) throw new Error("MetaMask not detected");
+
+      const chainIdHex = "0x" + parseInt(targetChain.chainId).toString(16);
+
+      // Try to switch the network in MetaMask
+      await window.ethereum.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: chainIdHex }],
+      });
+
+      // If success, close modal
+      setShowNetworkModal(false);
+      setModalError("");
+
+      // If we have a pending CID from before the switch, resume the upload automatically
+      if (pendingCid) {
+        // small delay to allow MetaMask to complete network change
+        setStatus("⏳ Resuming upload after network switch...");
+        const cidToResume = pendingCid;
+        setPendingCid(null);
+        try {
+          await resumeUpload(cidToResume);
+        } catch (resumeErr) {
+          console.error("Resume upload failed", resumeErr);
+          setStatus("❌ Resume upload failed");
+        }
+      }
+    } catch (err) {
+      console.warn("Initial switch failed, attempting to add chain:", err);
+      // If the chain is not added to MetaMask, try to add it (minimal data)
+      try {
+        // For demo purpose we provide basic chain params for Sepolia; in production use correct values per chain
+        const chainParams = {
+          chainId: "0x" + parseInt(targetChain.chainId).toString(16),
+          chainName: targetChain.name || "Network",
+          nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
+          rpcUrls: [targetChain.rpcUrl || ""],
+          blockExplorerUrls: [],
+        };
+        await window.ethereum.request({
+          method: "wallet_addEthereumChain",
+          params: [chainParams],
+        });
+
+        setShowNetworkModal(false);
+        setModalError("");
+
+        if (pendingCid) {
+          setStatus("❌ Network switch/add failed — upload paused");
+        }
+      } catch (err2) {
+        console.error("Switch network failed", err2);
+        setModalError(err2.message || String(err2));
+      }
+    }
+  }
+
+  async function resumeUpload(cid) {
+    try {
+      // create a fresh browser provider and signer (MetaMask should now be on correct network)
+      const browserProvider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await browserProvider.getSigner();
+
+      // contract with signer
+      const contract = new ethers.Contract(
+        contractAddress,
+        contractABI,
+        signer
+      );
+
+      setStatus("⏳ Storing CID on blockchain...");
+      const tx = await contract.uploadDocument(cid);
+      await tx.wait();
+      setStatus(`✅ Document stored with CID: ${cid}`);
+    } catch (err) {
+      console.error("resumeUpload failed", err);
+      setStatus("❌ Blockchain transaction failed");
+    }
+  }
+
   return (
     <div className="flex justify-center h-full bg-slate-100 p-2">
+      {showNetworkModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-md bg-white rounded-xl shadow-xl p-6">
+            <h3 className="text-lg font-semibold text-gray-800 mb-2">
+              Network mismatch
+            </h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Your MetaMask is connected to a different network than the app's
+              Alchemy provider. Please switch MetaMask to the correct network
+              and then click Ok.
+            </p>
+            {modalError && (
+              <div className="mb-3 text-sm text-red-500">{modalError}</div>
+            )}
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={switchNetwork}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+              >
+                Switch network
+              </button>
+              <button
+                onClick={() => {
+                  setShowNetworkModal(false);
+                  setModalError("");
+                }}
+                className="px-4 py-2 bg-gray-100 text-gray-800 rounded-lg hover:bg-gray-200"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full max-w-4xl bg-white rounded-2xl shadow-xl p-8">
         {/* LEFT SIDE - FILE UPLOAD */}
         <div className="flex flex-col justify-center space-y-6 border-dashed border-2 border-purple-500 rounded-xl p-10">
